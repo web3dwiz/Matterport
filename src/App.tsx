@@ -1,8 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "./App.css";
 import { MpSdk, setupSdk } from "@matterport/sdk";
-
-// "https://my.matterport.com/show?qs=1&m=j4RZx7ZGM6T&play=1&applicationKey=5kic6ie6efzhec229s1783usc"
 
 function getRandomInteger(min: number, max: number) {
   return Math.floor(Math.random() * (max - min)) + min;
@@ -10,18 +8,25 @@ function getRandomInteger(min: number, max: number) {
 
 function App() {
   const [sdk, setSdk] = useState<MpSdk>();
-  const container = useRef<HTMLDivElement>(null);
+
+  const containerRef = useRef<HTMLDivElement>(null);
+  const overlayRef = useRef<HTMLDivElement>(null);
+
   let started = false;
 
-  const intersectionRef = useRef<any>();
+  const [store] = useState<{
+    intersection?: MpSdk.Pointer.Intersection;
+    modelData?: MpSdk.Model.ModelData;
+    floorData?: string[][];
+  }>({});
 
   useEffect(() => {
-    if (!started && container.current) {
+    if (!started && containerRef.current) {
       started = true;
 
       (async () => {
-        const mpSdk = await setupSdk("5kic6ie6efzhec229s1783usc", {
-          container: container.current!,
+        const mpSdk: MpSdk = await setupSdk("5kic6ie6efzhec229s1783usc", {
+          container: containerRef.current!,
           space: "j4RZx7ZGM6T",
           iframeQueryParams: { qs: 1 },
         });
@@ -30,35 +35,71 @@ function App() {
           (state: any) => state.phase === mpSdk.App.Phase.PLAYING
         );
 
-        mpSdk.Pointer.intersection.subscribe(function (intersection: any) {
-          intersectionRef.current = intersection;
+        // Get the intersection point
+        mpSdk.Pointer.intersection.subscribe(function (
+          intersection: MpSdk.Pointer.Intersection
+        ) {
+          store.intersection = intersection;
         });
 
         const modelData = await mpSdk.Model.getData();
 
-        // Get random Sweep ID
-        const randomID = getRandomInteger(0, modelData.sweeps.length);
-        let { sid, rotation, floor } = modelData.sweeps[randomID];
-        console.log(modelData, modelData.sweeps);
+        const floorData: string[][] = [];
 
-        // mpSdk.Camera.rotate(135, 0);
+        modelData.sweeps.forEach(({ floor, sid }: MpSdk.Sweep.SweepData) => {
+          if (!floorData[floor]) floorData[floor] = [];
+          floorData[floor].push(sid);
+        });
 
-        if (floor) {
-          await mpSdk.Sweep.moveTo(sid, {
-            rotation: rotation,
-            transition: mpSdk.Sweep.Transition.INSTANT,
-            transitionTime: 2000,
-          });
-        }
+        store.modelData = modelData;
+        store.floorData = floorData;
 
         setSdk(mpSdk);
       })();
     }
-  }, []);
+  }, [store, setSdk]);
+
+  const mouseDownHandler = useCallback(() => {
+    overlayRef.current!.style.pointerEvents = "none";
+
+    const timer = window.setTimeout(() => {
+      overlayRef.current!.style.pointerEvents = "auto";
+
+      const { modelData, intersection, floorData } = store;
+
+      console.log(store);
+
+      if (!sdk || !intersection || !modelData || !floorData) return;
+
+      const { floorId } = intersection;
+
+      if (!floorId) return;
+
+      // Get random Sweep ID
+      const randomID = getRandomInteger(0, floorData[floorId!].length);
+      const sid = floorData[floorId!][randomID];
+
+      // Move Camera to The Random Sweep
+      sdk!.Sweep.moveTo(sid, {
+        transition: sdk.Sweep.Transition.INSTANT,
+        transitionTime: 1000,
+      });
+    }, 100);
+
+    return () => {
+      clearTimeout(timer);
+    };
+  }, [sdk, store]);
 
   return (
     <div className="app">
-      <div className="container" ref={container}></div>
+      <div className="container" ref={containerRef}>
+        <div
+          ref={overlayRef}
+          className="overlay"
+          onPointerDown={mouseDownHandler}
+        />
+      </div>
     </div>
   );
 }
